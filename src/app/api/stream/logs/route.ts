@@ -1,60 +1,30 @@
-import { botBridge, startSimulators } from "@/lib/bot-bridge";
-import { sseHub } from "@/lib/sse-hub";
-import { createSSEResponse } from "@/lib/sse-utils";
-import { readErrorLogTail, watchErrorLog } from "@/lib/pm2";
-import type { SystemLog } from "@/types/bot";
+import { botBridge } from "@/lib/bot-bridge";
+import {
+  createPollingSSEResponse,
+  LOGS_POLL_MS,
+} from "@/lib/poll-stream";
 
 export const dynamic = "force-dynamic";
 
-function parsePm2Line(line: string): SystemLog {
-  const match = line.match(
-    /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+\[(\w+)\]\s+(.+)$/
-  );
-
-  if (match) {
-    const [, dateTime, level, message] = match;
-    const time = dateTime.split(" ")[1] ?? dateTime;
-    return {
-      id: `pm2-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      time,
-      level: (level as SystemLog["level"]) ?? "info",
-      message,
-      source: "pm2",
-    };
-  }
-
-  return {
-    id: `pm2-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    time: new Date().toLocaleTimeString("en-GB", { hour12: false }),
-    level: "info",
-    message: line,
-    source: "pm2",
-  };
-}
-
 export async function GET(request: Request) {
-  startSimulators();
+  const seenIds = new Set<string>();
+  let seeded = false;
 
-  const initialLines = await readErrorLogTail(30);
+  return createPollingSSEResponse(request, LOGS_POLL_MS, async (send) => {
+    const logs = await botBridge.getLogs(100);
 
-  return createSSEResponse(request, (send) => {
-    for (const line of initialLines) {
-      send(parsePm2Line(line));
+    for (const log of logs) {
+      if (seenIds.has(log.id)) continue;
+      seenIds.add(log.id);
+      if (seeded) send(log);
     }
+    seeded = true;
 
-    const unsubscribeSSE = sseHub.subscribe("logs", (data) => {
-      send(data);
-    });
-
-    const stopWatch = watchErrorLog((line) => {
-      send(parsePm2Line(line));
-    });
-
-    botBridge.createLog("info", "Log stream connected", "system");
-
-    return () => {
-      unsubscribeSSE();
-      stopWatch();
-    };
+    if (seenIds.size > 500) {
+      const keep = new Set(logs.map((l) => l.id));
+      for (const id of seenIds) {
+        if (!keep.has(id)) seenIds.delete(id);
+      }
+    }
   });
 }

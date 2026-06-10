@@ -2,6 +2,25 @@ export type MessageDirection = "incoming" | "outgoing";
 export type LogLevel = "info" | "warn" | "error" | "debug";
 export type ConnectionStatus = "connected" | "disconnected" | "connecting";
 
+export type BotDataScope =
+  | "stats"
+  | "metrics"
+  | "status"
+  | "messages"
+  | "commands"
+  | "groups"
+  | "logs";
+
+export type BotCommandAction =
+  | "restart"
+  | "clear_cache"
+  | "reload_commands"
+  | "toggle_command"
+  | "send_message"
+  | "kick"
+  | "promote"
+  | "purge";
+
 export interface BotMessage {
   id: string;
   type: MessageDirection;
@@ -67,6 +86,26 @@ export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+}
+
+export interface RemoteBotDataPayload {
+  stats?: DashboardStats;
+  metrics?: { cpu: number; ram: number };
+  status?: ConnectionState;
+  messages?: BotMessage[];
+  commands?: BotCommand[];
+  groups?: BotGroup[];
+  logs?: SystemLog[];
+}
+
+export interface RemoteBotCommandPayload {
+  action: BotCommandAction;
+  commandId?: string;
+  enabled?: boolean;
+  groupId?: string;
+  userId?: string;
+  message?: string;
+  confirm?: string;
 }
 
 export interface GroupActionPayload {

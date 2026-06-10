@@ -1,13 +1,13 @@
 /**
- * Bot Bridge — modular data layer between the dashboard and your bot instance.
+ * Bot Bridge — proxies all dashboard operations to the remote Bot Express API.
  *
- * Replace mock implementations with real bot hooks:
- *   botBridge.setBotInstance(yourBot)
+ * Remote endpoints:
+ *   GET  /api/bot-data?scope=<stats|metrics|status|messages|commands|groups|logs>
+ *   POST /api/bot-command  { action: "restart" | "clear_cache" | ... }
  *
- * All dashboard API routes call through this module.
+ * Auth: x-api-key header (BOT_API_KEY)
  */
 
-import os from "os";
 import type {
   ApiResponse,
   BotCommand,
@@ -18,253 +18,49 @@ import type {
   SystemLog,
   SystemMetrics,
 } from "@/types/bot";
+import {
+  BotApiError,
+  fetchBotData,
+  isBotApiConfigured,
+  sendBotCommand,
+} from "@/lib/bot-api-client";
 import { sseHub } from "@/lib/sse-hub";
-import { formatUptime } from "@/lib/utils";
 
-// ---------------------------------------------------------------------------
-// In-memory state (swap with real bot state when integrating)
-// ---------------------------------------------------------------------------
-
-interface BotBridgeState {
-  commands: BotCommand[];
-  groups: BotGroup[];
-  messages: BotMessage[];
-  totalUsers: number;
-  todayMessages: number;
-  startedAt: number;
-  connection: ConnectionState;
-  simulatorsStarted: boolean;
-}
-
-const globalForBridge = globalThis as unknown as {
-  botBridgeState?: BotBridgeState;
+const DISCONNECTED: ConnectionState = {
+  api: "disconnected",
+  gateway: "disconnected",
 };
 
-function createInitialState(): BotBridgeState {
+// ---------------------------------------------------------------------------
+// Normalizers (tolerate minor shape differences from the remote bot)
+// ---------------------------------------------------------------------------
+
+function normalizeMessage(raw: BotMessage): BotMessage {
   return {
-    commands: [
-      { id: "1", name: "/help", description: "Show available commands and usage info", usageCount: 1243, enabled: true },
-      { id: "2", name: "/status", description: "Display bot status and uptime", usageCount: 892, enabled: true },
-      { id: "3", name: "/ping", description: "Check bot latency and responsiveness", usageCount: 567, enabled: true },
-      { id: "4", name: "/kick", description: "Kick a user from the group (admin only)", usageCount: 34, enabled: false },
-      { id: "5", name: "/promote", description: "Promote a user to admin (admin only)", usageCount: 12, enabled: true },
-      { id: "6", name: "/broadcast", description: "Send a message to all groups", usageCount: 8, enabled: false },
-    ],
-    groups: [
-      { id: "g1", name: "Dev Team", groupId: "-1001234567890", memberCount: 24 },
-      { id: "g2", name: "General Chat", groupId: "-1009876543210", memberCount: 156 },
-      { id: "g3", name: "Announcements", groupId: "-1005555555555", memberCount: 892 },
-      { id: "g4", name: "Support", groupId: "-1001111222333", memberCount: 45 },
-      { id: "g5", name: "Beta Testers", groupId: "-1004444555666", memberCount: 18 },
-    ],
-    messages: [],
-    totalUsers: 3892,
-    todayMessages: 1284,
-    startedAt: Date.now() - 12 * 86400000 - 4 * 3600000 - 32 * 60000,
-    connection: { api: "connected", gateway: "connected" },
-    simulatorsStarted: false,
+    id: raw.id,
+    type: raw.type,
+    user: raw.user,
+    userId: raw.userId,
+    group: raw.group,
+    groupId: raw.groupId,
+    content: raw.content,
+    timestamp: raw.timestamp,
+    createdAt: raw.createdAt ?? Date.now(),
   };
 }
 
-const state: BotBridgeState =
-  globalForBridge.botBridgeState ?? createInitialState();
-if (process.env.NODE_ENV !== "production") {
-  globalForBridge.botBridgeState = state;
-}
-
-// Optional real bot instance hook
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let botInstance: any = null;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function nowTime(): string {
-  return new Date().toLocaleTimeString("en-GB", { hour12: false });
-}
-
-function createLog(
-  level: SystemLog["level"],
-  message: string,
-  source: SystemLog["source"] = "bot"
-): SystemLog {
-  const log: SystemLog = {
-    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    time: nowTime(),
-    level,
-    message,
-    source,
-  };
-  sseHub.emitLog(log);
-  return log;
-}
-
-function addMessage(partial: Omit<BotMessage, "id" | "timestamp" | "createdAt">): BotMessage {
-  const message: BotMessage = {
-    ...partial,
-    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    timestamp: nowTime(),
-    createdAt: Date.now(),
-  };
-  state.messages.unshift(message);
-  if (state.messages.length > 500) state.messages.pop();
-  state.todayMessages++;
-  sseHub.emitMessage(message);
-  return message;
-}
-
-function getCpuPercent(): number {
-  const cpus = os.cpus().length || 1;
-  const load = os.loadavg()[0] ?? 0;
-  const raw = (load / cpus) * 100;
-  return Math.min(100, Math.max(5, raw + (Math.random() - 0.5) * 8));
-}
-
-function getRamPercent(): number {
-  const total = os.totalmem();
-  const free = os.freemem();
-  const used = ((total - free) / total) * 100;
-  return Math.min(100, Math.max(10, used + (Math.random() - 0.5) * 4));
-}
-
-// ---------------------------------------------------------------------------
-// Mock simulators (disable when real bot is connected)
-// ---------------------------------------------------------------------------
-
-const MOCK_USERS = [
-  { name: "Ali Hassan", id: "123456789" },
-  { name: "Sara Ahmed", id: "987654321" },
-  { name: "Omar Khalid", id: "456789123" },
-  { name: "Fatima Noor", id: "321654987" },
-  { name: "Youssef Ali", id: "789123456" },
-];
-
-const MOCK_INCOMING = [
-  "Hello bot, what's the status?",
-  "/help",
-  "/ping",
-  "Can you restart the service?",
-  "Thanks for the update!",
-  "Is the bot online?",
-  "/status",
-];
-
-const MOCK_OUTGOING = [
-  "All systems operational.",
-  "Available commands: /status, /help, /ping",
-  "Pong! Latency: 42ms",
-  "Bot uptime is healthy.",
-  "Message received and processed.",
-];
-
-let metricsInterval: ReturnType<typeof setInterval> | null = null;
-let messageInterval: ReturnType<typeof setInterval> | null = null;
-
-export function startSimulators(): void {
-  if (state.simulatorsStarted || botInstance) return;
-  state.simulatorsStarted = true;
-
-  // Seed initial messages
-  if (state.messages.length === 0) {
-    const group = state.groups[0];
-    addMessage({
-      type: "incoming",
-      user: "Ali Hassan",
-      userId: "123456789",
-      group: group.name,
-      groupId: group.groupId,
-      content: "Hello bot, what's the status?",
-    });
-    addMessage({
-      type: "outgoing",
-      user: "Bot",
-      userId: "bot",
-      group: group.name,
-      groupId: group.groupId,
-      content: `All systems operational. Uptime: ${formatUptime(getUptimeSeconds())}`,
-    });
-    state.todayMessages = 1284;
-  }
-
-  createLog("info", "Bot bridge simulators started", "system");
-  createLog("info", `Monitoring process: ${process.env.BOT_PM2_NAME || "bot"}`, "system");
-
-  metricsInterval = setInterval(() => {
-    const metrics = getSystemMetrics();
-    sseHub.emitMetrics(metrics);
-  }, 2000);
-
-  messageInterval = setInterval(() => {
-    const group = state.groups[Math.floor(Math.random() * state.groups.length)];
-    const user = MOCK_USERS[Math.floor(Math.random() * MOCK_USERS.length)];
-    const isIncoming = Math.random() > 0.35;
-
-    if (isIncoming) {
-      const content = MOCK_INCOMING[Math.floor(Math.random() * MOCK_INCOMING.length)];
-      addMessage({
-        type: "incoming",
-        user: user.name,
-        userId: user.id,
-        group: group.name,
-        groupId: group.groupId,
-        content,
-      });
-      if (content.startsWith("/")) {
-        const cmd = state.commands.find((c) => c.name === content.split(" ")[0]);
-        if (cmd) cmd.usageCount++;
-      }
-      createLog("info", `Message from ${user.name} in ${group.name}`, "bot");
-    } else {
-      addMessage({
-        type: "outgoing",
-        user: "Bot",
-        userId: "bot",
-        group: group.name,
-        groupId: group.groupId,
-        content: MOCK_OUTGOING[Math.floor(Math.random() * MOCK_OUTGOING.length)],
-      });
-    }
-  }, 4000 + Math.random() * 4000);
-}
-
-export function stopSimulators(): void {
-  if (metricsInterval) clearInterval(metricsInterval);
-  if (messageInterval) clearInterval(messageInterval);
-  metricsInterval = null;
-  messageInterval = null;
-  state.simulatorsStarted = false;
-}
-
-// ---------------------------------------------------------------------------
-// Public API — swap these with real bot calls
-// ---------------------------------------------------------------------------
-
-export function setBotInstance(instance: unknown): void {
-  botInstance = instance;
-  stopSimulators();
-  createLog("info", "Real bot instance connected to bridge", "system");
-}
-
-export function getUptimeSeconds(): number {
-  if (botInstance?.uptime) return botInstance.uptime;
-  return Math.floor((Date.now() - state.startedAt) / 1000);
-}
-
-export function getDashboardStats(): DashboardStats {
-  if (botInstance?.getStats) return botInstance.getStats();
+function normalizeGroup(
+  raw: BotGroup & { members?: number }
+): BotGroup {
   return {
-    todayMessages: state.todayMessages,
-    totalGroups: state.groups.length,
-    totalUsers: state.totalUsers,
-    uptimeSeconds: getUptimeSeconds(),
-    messageTrend: "+12% from yesterday",
+    id: raw.id,
+    name: raw.name,
+    groupId: raw.groupId,
+    memberCount: raw.memberCount ?? raw.members ?? 0,
   };
 }
 
-export function getSystemMetrics(): SystemMetrics {
-  const cpu = Math.round(getCpuPercent() * 10) / 10;
-  const ram = Math.round(getRamPercent() * 10) / 10;
+function toSystemMetrics(cpu: number, ram: number): SystemMetrics {
   const timestamp = Date.now();
   return {
     cpu,
@@ -278,124 +74,225 @@ export function getSystemMetrics(): SystemMetrics {
   };
 }
 
-export function getConnectionState(): ConnectionState {
-  if (botInstance?.connection) return botInstance.connection;
-  return state.connection;
+function unwrapData<T>(response: ApiResponse<T>): T {
+  if (!response.success || response.data === undefined) {
+    throw new BotApiError(response.error ?? "Remote bot returned no data");
+  }
+  return response.data;
 }
 
-export function getMessages(limit = 100): BotMessage[] {
-  if (botInstance?.messages) return botInstance.messages.slice(0, limit);
-  return state.messages.slice(0, limit);
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export function createLog(
+  level: SystemLog["level"],
+  message: string,
+  source: SystemLog["source"] = "system"
+): SystemLog {
+  const log: SystemLog = {
+    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    time: new Date().toLocaleTimeString("en-GB", { hour12: false }),
+    level,
+    message,
+    source,
+  };
+  sseHub.emitLog(log);
+  return log;
 }
 
-export function getCommands(): BotCommand[] {
-  if (botInstance?.commands) return botInstance.commands;
-  return state.commands;
+export async function getDashboardStats(): Promise<DashboardStats> {
+  if (!isBotApiConfigured()) {
+    throw new BotApiError("Bot API is not configured");
+  }
+  const response = await fetchBotData("stats");
+  return unwrapData(response).stats!;
 }
 
-export function getGroups(): BotGroup[] {
-  if (botInstance?.groups) return botInstance.groups;
-  return state.groups;
+export async function getSystemMetrics(): Promise<SystemMetrics> {
+  if (!isBotApiConfigured()) {
+    throw new BotApiError("Bot API is not configured");
+  }
+  const response = await fetchBotData("metrics");
+  const metrics = unwrapData(response).metrics!;
+  return toSystemMetrics(metrics.cpu, metrics.ram);
 }
 
-export function toggleCommand(id: string, enabled: boolean): ApiResponse<BotCommand> {
-  const cmd = state.commands.find((c) => c.id === id);
-  if (!cmd) return { success: false, error: "Command not found" };
-
-  cmd.enabled = enabled;
-  createLog("info", `Command ${cmd.name} ${enabled ? "enabled" : "disabled"}`, "bot");
-  return { success: true, data: cmd };
+export async function getConnectionState(): Promise<ConnectionState> {
+  if (!isBotApiConfigured()) {
+    return DISCONNECTED;
+  }
+  try {
+    const response = await fetchBotData("status");
+    if (!response.success || !response.data?.status) {
+      return DISCONNECTED;
+    }
+    return response.data.status;
+  } catch {
+    return DISCONNECTED;
+  }
 }
 
-export function reloadCommands(): ApiResponse<{ count: number }> {
-  createLog("info", "Reloading plugins and commands...", "bot");
-  createLog("info", "Plugin 'commands' loaded", "bot");
-  createLog("info", "Plugin 'moderation' loaded", "bot");
-  createLog("info", `Loaded ${state.commands.length} commands`, "bot");
-  return { success: true, data: { count: state.commands.length } };
+export async function getMessages(limit = 100): Promise<BotMessage[]> {
+  if (!isBotApiConfigured()) {
+    throw new BotApiError("Bot API is not configured");
+  }
+  const response = await fetchBotData("messages", { limit: String(limit) });
+  const messages = unwrapData(response).messages ?? [];
+  return messages.map(normalizeMessage);
 }
 
-export function sendGroupMessage(
+export async function getCommands(): Promise<BotCommand[]> {
+  if (!isBotApiConfigured()) {
+    throw new BotApiError("Bot API is not configured");
+  }
+  const response = await fetchBotData("commands");
+  return unwrapData(response).commands ?? [];
+}
+
+export async function getGroups(): Promise<BotGroup[]> {
+  if (!isBotApiConfigured()) {
+    throw new BotApiError("Bot API is not configured");
+  }
+  const response = await fetchBotData("groups");
+  const groups = unwrapData(response).groups ?? [];
+  return groups.map(normalizeGroup);
+}
+
+export async function getLogs(limit = 50): Promise<SystemLog[]> {
+  if (!isBotApiConfigured()) {
+    throw new BotApiError("Bot API is not configured");
+  }
+  const response = await fetchBotData("logs", { limit: String(limit) });
+  return unwrapData(response).logs ?? [];
+}
+
+export async function toggleCommand(
+  id: string,
+  enabled: boolean
+): Promise<ApiResponse<BotCommand>> {
+  const result = await sendBotCommand<BotCommand>({
+    action: "toggle_command",
+    commandId: id,
+    enabled,
+  });
+  if (result.success) {
+    createLog(
+      "info",
+      `Command ${id} ${enabled ? "enabled" : "disabled"}`,
+      "bot"
+    );
+  }
+  return result;
+}
+
+export async function reloadCommands(): Promise<ApiResponse<{ count: number }>> {
+  const result = await sendBotCommand<{ count: number }>({
+    action: "reload_commands",
+  });
+  if (result.success) {
+    createLog("info", "Plugins and commands reloaded", "bot");
+  }
+  return result;
+}
+
+export async function restartBot(): Promise<ApiResponse<{ output?: string }>> {
+  createLog("warn", "Sending restart command to remote bot...", "system");
+  const result = await sendBotCommand<{ output?: string }>({
+    action: "restart",
+  });
+  if (result.success) {
+    createLog("info", "Remote bot restart acknowledged", "bot");
+  }
+  return result;
+}
+
+export async function sendGroupMessage(
   groupId: string,
   message: string
-): ApiResponse<{ messageId: string }> {
-  const group = state.groups.find((g) => g.id === groupId || g.groupId === groupId);
-  if (!group) return { success: false, error: "Group not found" };
-
-  const msg = addMessage({
-    type: "outgoing",
-    user: "Bot (Admin)",
-    userId: "bot",
-    group: group.name,
-    groupId: group.groupId,
-    content: message,
+): Promise<ApiResponse<{ messageId: string }>> {
+  const result = await sendBotCommand<{ messageId: string }>({
+    action: "send_message",
+    groupId,
+    message,
   });
-
-  createLog("info", `Admin message sent to ${group.name}`, "bot");
-  return { success: true, data: { messageId: msg.id } };
+  if (result.success) {
+    createLog("info", `Message sent to group ${groupId}`, "bot");
+  }
+  return result;
 }
 
-export function kickMember(
+export async function kickMember(
   groupId: string,
   userId: string
-): ApiResponse<{ userId: string }> {
-  const group = state.groups.find((g) => g.id === groupId || g.groupId === groupId);
-  if (!group) return { success: false, error: "Group not found" };
-
-  createLog("warn", `Kicked user ${userId} from ${group.name}`, "bot");
-  return { success: true, data: { userId } };
+): Promise<ApiResponse<{ userId: string }>> {
+  const result = await sendBotCommand<{ userId: string }>({
+    action: "kick",
+    groupId,
+    userId,
+  });
+  if (result.success) {
+    createLog("warn", `Kicked user ${userId} from group ${groupId}`, "bot");
+  }
+  return result;
 }
 
-export function promoteMember(
+export async function promoteMember(
   groupId: string,
   userId: string
-): ApiResponse<{ userId: string }> {
-  const group = state.groups.find((g) => g.id === groupId || g.groupId === groupId);
-  if (!group) return { success: false, error: "Group not found" };
-
-  createLog("info", `Promoted user ${userId} in ${group.name}`, "bot");
-  return { success: true, data: { userId } };
+): Promise<ApiResponse<{ userId: string }>> {
+  const result = await sendBotCommand<{ userId: string }>({
+    action: "promote",
+    groupId,
+    userId,
+  });
+  if (result.success) {
+    createLog("info", `Promoted user ${userId} in group ${groupId}`, "bot");
+  }
+  return result;
 }
 
-export function purgeGroup(
+export async function purgeGroup(
   groupId: string,
   confirm: string
-): ApiResponse<{ kicked: number }> {
+): Promise<ApiResponse<{ kicked: number }>> {
   if (confirm !== "CONFIRM") {
     return { success: false, error: 'Type "CONFIRM" to proceed' };
   }
-
-  const group = state.groups.find((g) => g.id === groupId || g.groupId === groupId);
-  if (!group) return { success: false, error: "Group not found" };
-
-  const kicked = group.memberCount;
-  group.memberCount = 0;
-  createLog("error", `PURGE: Kicked all ${kicked} members from ${group.name}`, "bot");
-  return { success: true, data: { kicked } };
+  const result = await sendBotCommand<{ kicked: number }>({
+    action: "purge",
+    groupId,
+    confirm,
+  });
+  if (result.success) {
+    createLog("error", `Purged group ${groupId}`, "bot");
+  }
+  return result;
 }
 
-export function clearCache(): ApiResponse {
-  createLog("info", "Cache cleared successfully", "system");
-  return { success: true };
+export async function clearCache(): Promise<ApiResponse> {
+  const result = await sendBotCommand({ action: "clear_cache" });
+  if (result.success) {
+    createLog("info", "Remote bot cache cleared", "bot");
+  }
+  return result;
 }
 
 export const botBridge = {
-  setBotInstance,
-  startSimulators,
-  stopSimulators,
   getDashboardStats,
   getSystemMetrics,
   getConnectionState,
   getMessages,
   getCommands,
   getGroups,
+  getLogs,
   toggleCommand,
   reloadCommands,
+  restartBot,
   sendGroupMessage,
   kickMember,
   promoteMember,
   purgeGroup,
   clearCache,
-  getUptimeSeconds,
   createLog,
 };

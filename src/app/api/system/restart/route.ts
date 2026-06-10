@@ -1,18 +1,20 @@
 import { NextResponse } from "next/server";
 import { botBridge } from "@/lib/bot-bridge";
-import { restartBotProcess } from "@/lib/pm2";
+import { BotApiError } from "@/lib/bot-api-client";
 
 export const dynamic = "force-dynamic";
 
 export async function POST() {
   try {
-    botBridge.createLog("warn", "Restarting bot process via PM2...", "system");
-    const { output } = await restartBotProcess();
-    botBridge.createLog("info", `PM2 restart: ${output}`, "pm2");
-    return NextResponse.json({ success: true, data: { output } });
+    const result = await botBridge.restartBot();
+    if (!result.success) {
+      return NextResponse.json(result, { status: 500 });
+    }
+    return NextResponse.json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Restart failed";
-    botBridge.createLog("error", message, "pm2");
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    const message =
+      error instanceof BotApiError ? error.message : "Restart failed";
+    botBridge.createLog("error", message, "system");
+    return NextResponse.json({ success: false, error: message }, { status: 502 });
   }
 }

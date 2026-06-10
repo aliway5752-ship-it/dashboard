@@ -1,84 +1,116 @@
 # Bot Admin Dashboard
 
-A comprehensive web dashboard to manage and monitor your bot in real-time.
+A Next.js dashboard that connects to your remote Bot Express API for real-time monitoring and control.
 
 ## Tech Stack
 
-- **Frontend:** Next.js 15 (App Router), Tailwind CSS v4, Lucide Icons, Shadcn-style UI components
-- **Charts:** Recharts
-- **Real-time (Phase 2):** Socket.io / SSE
-- **Backend (Phase 2):** Next.js API Routes + PM2 integration
+- **Frontend:** Next.js 15 (App Router), Tailwind CSS v4, Lucide Icons
+- **Backend:** Next.js API Routes (proxy to remote bot)
+- **Real-time:** Server-Sent Events (SSE) with 2–3s polling of remote bot
 
-## Pages
+## Environment Variables
 
-| Route | Description |
-|-------|-------------|
-| `/` | Dashboard overview — stats cards + CPU/RAM charts |
-| `/messages` | Live message feed with search and filters |
-| `/commands` | Command management with enable/disable toggles |
-| `/groups` | Group management with send/kick/promote/purge actions |
-| `/settings` | System controls, connection status, live log viewer |
+Copy `.env.example` to `.env.local` (local) or set in Vercel:
+
+```env
+NEXT_PUBLIC_BOT_API_URL=http://your-vps-ip:4000
+BOT_API_KEY=your-secret-api-key
+```
+
+| Variable | Description |
+|----------|-------------|
+| `NEXT_PUBLIC_BOT_API_URL` | Base URL of your remote Bot Express server |
+| `BOT_API_KEY` | API key sent as `x-api-key` header (server-side only) |
 
 ## Getting Started
 
 ```bash
 npm install
+cp .env.example .env.local   # configure your bot URL + API key
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Project Structure
+## Remote Bot API Contract
 
+Your Bot Express server must expose these endpoints (authenticated via `x-api-key`):
+
+### `GET /api/bot-data?scope=<scope>`
+
+| Scope | Response `data` field |
+|-------|----------------------|
+| `stats` | `{ stats: DashboardStats }` |
+| `metrics` | `{ metrics: { cpu: number, ram: number } }` |
+| `status` | `{ status: { api: "connected", gateway: "connected" } }` |
+| `messages` | `{ messages: BotMessage[] }` |
+| `commands` | `{ commands: BotCommand[] }` |
+| `groups` | `{ groups: BotGroup[] }` |
+| `logs` | `{ logs: SystemLog[] }` |
+
+Optional query params: `limit` (for messages/logs).
+
+Example response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "stats": {
+      "todayMessages": 1284,
+      "totalGroups": 47,
+      "totalUsers": 3892,
+      "uptimeSeconds": 1048320,
+      "messageTrend": "+12% from yesterday"
+    }
+  }
+}
 ```
-src/
-├── app/                  # Next.js App Router pages
-│   ├── page.tsx          # Dashboard home
-│   ├── messages/
-│   ├── commands/
-│   ├── groups/
-│   └── settings/
-├── components/
-│   ├── ui/               # Reusable UI primitives
-│   ├── layout/           # Sidebar, header, shell
-│   └── dashboard/        # Dashboard-specific components
-└── lib/
-    └── utils.ts          # Utilities
+
+### `POST /api/bot-command`
+
+```json
+{ "action": "restart" }
+{ "action": "clear_cache" }
+{ "action": "reload_commands" }
+{ "action": "toggle_command", "commandId": "1", "enabled": true }
+{ "action": "send_message", "groupId": "g1", "message": "Hello" }
+{ "action": "kick", "groupId": "g1", "userId": "123456" }
+{ "action": "promote", "groupId": "g1", "userId": "123456" }
+{ "action": "purge", "groupId": "g1", "confirm": "CONFIRM" }
 ```
 
-## API Routes
+## Dashboard API Routes (Next.js proxy)
 
-| Method | Endpoint | Description |
+| Method | Endpoint | Remote call |
 |--------|----------|-------------|
-| GET | `/api/stats` | Dashboard statistics |
-| GET | `/api/status` | API/Gateway connection state |
-| GET | `/api/messages` | Message history |
-| GET | `/api/commands` | List commands |
-| PATCH | `/api/commands/[id]` | Toggle command enabled state |
-| POST | `/api/commands/reload` | Reload plugins/commands |
-| GET | `/api/groups` | List groups |
-| POST | `/api/groups/[id]/message` | Send message to group |
-| POST | `/api/groups/[id]/kick` | Kick member |
-| POST | `/api/groups/[id]/promote` | Promote member |
-| POST | `/api/groups/[id]/purge` | Purge all members |
-| POST | `/api/system/restart` | PM2 restart bot |
-| POST | `/api/system/clear-cache` | Clear bot cache |
+| GET | `/api/stats` | `bot-data?scope=stats` |
+| GET | `/api/status` | `bot-data?scope=status` |
+| GET | `/api/messages` | `bot-data?scope=messages` |
+| GET | `/api/logs` | `bot-data?scope=logs` |
+| GET | `/api/commands` | `bot-data?scope=commands` |
+| PATCH | `/api/commands/[id]` | `bot-command` toggle |
+| POST | `/api/commands/reload` | `bot-command` reload |
+| GET | `/api/groups` | `bot-data?scope=groups` |
+| POST | `/api/groups/[id]/message` | `bot-command` send_message |
+| POST | `/api/groups/[id]/kick` | `bot-command` kick |
+| POST | `/api/groups/[id]/promote` | `bot-command` promote |
+| POST | `/api/groups/[id]/purge` | `bot-command` purge |
+| POST | `/api/system/restart` | `bot-command` restart |
+| POST | `/api/system/clear-cache` | `bot-command` clear_cache |
 
-## SSE Streams
+## SSE Streams (poll remote bot)
 
-| Endpoint | Interval | Data |
-|----------|----------|------|
-| `/api/stream/metrics` | 2s | CPU & RAM percentages |
-| `/api/stream/messages` | Real-time | New chat messages |
-| `/api/stream/logs` | Real-time | PM2 error log + system events |
+| Endpoint | Poll interval | Data |
+|----------|---------------|------|
+| `/api/stream/metrics` | 2s | CPU & RAM from remote bot |
+| `/api/stream/messages` | 2.5s | New messages (deduplicated) |
+| `/api/stream/logs` | 3s | New logs (deduplicated) |
 
-## Bot Integration
+## Vercel Deployment
 
-Swap mock data with your real bot in `src/lib/bot-bridge.ts`:
-
-```typescript
-import { botBridge } from "@/lib/bot-bridge";
-botBridge.setBotInstance(yourBot);
-```
-
-Set `BOT_PM2_NAME` in `.env` for PM2 restart and log tailing.
+1. Push to GitHub — Vercel auto-deploys
+2. Add environment variables in Vercel project settings:
+   - `NEXT_PUBLIC_BOT_API_URL`
+   - `BOT_API_KEY`
+3. Ensure your VPS bot allows requests from Vercel (firewall / CORS not needed for server-side proxy)

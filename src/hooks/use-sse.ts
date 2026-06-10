@@ -31,7 +31,12 @@ export function useSSE<T>({
 
     source.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data) as T;
+        const parsed = JSON.parse(event.data) as T & { type?: string };
+        if (parsed && typeof parsed === "object" && parsed.type === "error") {
+          setConnected(false);
+          return;
+        }
+        const data = parsed as T;
         setLatest(data);
         onMessageRef.current?.(data);
 

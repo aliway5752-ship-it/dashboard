@@ -41,6 +41,9 @@ export default function SettingsPage() {
     apiFetch<ConnectionState>("/api/status").then((res) => {
       if (res.success && res.data) setConnection(res.data);
     });
+    apiFetch<SystemLog[]>("/api/logs?limit=50").then((res) => {
+      if (res.success && res.data) setLogs(res.data);
+    });
     const interval = setInterval(() => {
       apiFetch<ConnectionState>("/api/status").then((res) => {
         if (res.success && res.data) setConnection(res.data);
