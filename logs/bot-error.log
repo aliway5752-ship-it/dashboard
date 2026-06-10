@@ -1,0 +1,9 @@
+2026-06-10 14:33:35 [info] Bot process started (PID: 4821)
+2026-06-10 14:33:38 [info] Plugin 'commands' loaded
+2026-06-10 14:33:40 [info] Plugin 'moderation' loaded
+2026-06-10 14:33:55 [info] Cache cleared successfully
+2026-06-10 14:34:12 [error] Failed to send message to group -1005555555555: BOT_NOT_ADMIN
+2026-06-10 14:34:30 [info] WebSocket connection established
+2026-06-10 14:34:45 [warn] Rate limit approaching for group -1001234567890
+2026-06-10 14:34:58 [info] Processed command /status from user 123456789
+2026-06-10 14:35:01 [info] Bot heartbeat OK — latency 42ms
