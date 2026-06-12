@@ -16,9 +16,9 @@ export class BotApiError extends Error {
 }
 
 export function isBotApiConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_BOT_API_URL && process.env.BOT_API_KEY
-  );
+  const url = process.env.NEXT_PUBLIC_BOT_API_URL || "http://85.208.9.224:9518";
+  const key = process.env.NEXT_PUBLIC_BOT_API_KEY || process.env.BOT_API_KEY;
+  return Boolean(url && key);
 }
 
 export function getBotApiUrl(): string {
