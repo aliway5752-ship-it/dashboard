@@ -22,17 +22,15 @@ export function isBotApiConfigured(): boolean {
 }
 
 export function getBotApiUrl(): string {
-  const url = process.env.NEXT_PUBLIC_BOT_API_URL;
-  if (!url) {
-    throw new BotApiError("NEXT_PUBLIC_BOT_API_URL is not configured");
-  }
-  return url.replace(/\/$/, "");
+  const baseUrl = process.env.NEXT_PUBLIC_BOT_API_URL || "http://85.208.9.224:9518";
+  const sanitizedBase = baseUrl.replace(/\/$/, "");
+  return `https://corsproxy.io/?${sanitizedBase}`;
 }
 
 function getBotApiKey(): string {
-  const key = process.env.BOT_API_KEY;
+  const key = process.env.NEXT_PUBLIC_BOT_API_KEY || process.env.BOT_API_KEY;
   if (!key) {
-    throw new BotApiError("BOT_API_KEY is not configured");
+    throw new BotApiError("NEXT_PUBLIC_BOT_API_KEY is not configured");
   }
   return key;
 }

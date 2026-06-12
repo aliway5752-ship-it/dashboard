@@ -1,17 +1,24 @@
+import { botApiRequest } from "./bot-api-client";
 import type { ApiResponse } from "@/types/bot";
 
 export async function apiFetch<T>(
   path: string,
   options?: RequestInit
 ): Promise<ApiResponse<T>> {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    ...options,
-  });
+  try {
+    // Basic validation to ensure we only proxy /api calls
+    if (!path.startsWith("/api/")) {
+      const response = await fetch(path, options);
+      return (await response.json()) as ApiResponse<T>;
+    }
 
-  const data = (await response.json()) as ApiResponse<T>;
-  if (!response.ok && !data.error) {
-    return { success: false, error: `Request failed (${response.status})` };
+    // Use botApiRequest which handles the CORS proxy and API key
+    return await botApiRequest<ApiResponse<T>>(path, options);
+  } catch (error: any) {
+    console.error(`apiFetch error for ${path}:`, error);
+    return { 
+      success: false, 
+      error: error.message || `Request to ${path} failed` 
+    } as ApiResponse<T>;
   }
-  return data;
 }
