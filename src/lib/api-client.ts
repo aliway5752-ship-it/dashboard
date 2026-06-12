@@ -14,11 +14,12 @@ export async function apiFetch<T>(
 
     // Use botApiRequest which handles the CORS proxy and API key
     return await botApiRequest<ApiResponse<T>>(path, options);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(`apiFetch error for ${path}:`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return { 
       success: false, 
-      error: error.message || `Request to ${path} failed` 
+      error: errorMessage || `Request to ${path} failed` 
     } as ApiResponse<T>;
   }
 }
