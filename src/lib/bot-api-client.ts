@@ -90,10 +90,19 @@ export async function fetchBotData(
   scope: BotDataScope,
   params?: Record<string, string>,
 ): Promise<ApiResponse<RemoteBotDataPayload>> {
-  const query = new URLSearchParams({ scope, ...params });
-  return botApiRequest<ApiResponse<RemoteBotDataPayload>>(
-    `/api/bot-data?${query.toString()}`,
+  const query = params ? new URLSearchParams(params).toString() : "";
+  const queryString = query ? `?${query}` : "";
+  const response = await botApiRequest<Record<string, unknown>>(
+    `/api/${scope}${queryString}`,
   );
+
+  // Extract the scope key and map it to .data property
+  const scopeData = response[scope] as RemoteBotDataPayload;
+
+  return {
+    success: response.success as boolean,
+    data: scopeData,
+  } as ApiResponse<RemoteBotDataPayload>;
 }
 
 export async function sendBotCommand<T = unknown>(
