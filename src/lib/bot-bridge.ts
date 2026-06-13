@@ -64,17 +64,17 @@ function toSystemMetrics(metrics: {
   processRssMB?: number;
   systemUsedMemoryMB?: number;
   systemTotalMemoryMB?: number;
-  cpu?: number;
+  cpuUsage?: number;
 }): SystemMetrics {
   const timestamp = Date.now();
   // Calculate CPU and RAM from actual bot API response
-  // Bot returns: processRssMB, systemTotalMemoryMB, systemUsedMemoryMB
+  // Bot returns: processRssMB, systemTotalMemoryMB, systemUsedMemoryMB, cpuUsage
   const ramUsed = metrics.systemUsedMemoryMB || metrics.processRssMB || 0;
   const ramTotal = metrics.systemTotalMemoryMB || 1;
   const ramPercent = (ramUsed / ramTotal) * 100;
   
-  // CPU is not directly provided, estimate from process stats or use 0
-  const cpuPercent = metrics.cpu || 0;
+  // CPU is provided as cpuUsage in the bot API response
+  const cpuPercent = metrics.cpuUsage || 0;
   
   return {
     cpu: cpuPercent,
@@ -120,7 +120,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     throw new BotApiError("Bot API is not configured");
   }
   const response = await fetchBotData("stats");
-  return unwrapData(response).stats!;
+  return unwrapData(response) as DashboardStats;
 }
 
 export async function getSystemMetrics(): Promise<SystemMetrics> {
@@ -128,7 +128,12 @@ export async function getSystemMetrics(): Promise<SystemMetrics> {
     throw new BotApiError("Bot API is not configured");
   }
   const response = await fetchBotData("metrics");
-  const metrics = unwrapData(response).metrics!;
+  const metrics = unwrapData(response) as {
+    processRssMB?: number;
+    systemUsedMemoryMB?: number;
+    systemTotalMemoryMB?: number;
+    cpuUsage?: number;
+  };
   return toSystemMetrics(metrics);
 }
 
@@ -138,13 +143,13 @@ export async function getConnectionState(): Promise<ConnectionState> {
   }
   try {
     const response = await fetchBotData("status");
-    if (!response.success || !response.data?.status) {
+    if (!response.success || !response.data) {
       return DISCONNECTED;
     }
     // Map bot API response to ConnectionState
     // Bot returns: { connected: boolean, uptime: number, botNumber: string }
     // Frontend expects: { api: "connected" | "disconnected" | "connecting", gateway: "connected" | "disconnected" | "connecting" }
-    const botStatus = response.data.status as unknown as { connected: boolean };
+    const botStatus = response.data as unknown as { connected: boolean };
     const status = botStatus.connected ? "connected" : "disconnected";
     return {
       api: status,
@@ -160,7 +165,7 @@ export async function getMessages(limit = 100): Promise<BotMessage[]> {
     throw new BotApiError("Bot API is not configured");
   }
   const response = await fetchBotData("messages", { limit: String(limit) });
-  const messages = unwrapData(response).messages ?? [];
+  const messages = unwrapData(response) as BotMessage[];
   return messages.map(normalizeMessage);
 }
 
@@ -169,7 +174,7 @@ export async function getCommands(): Promise<BotCommand[]> {
     throw new BotApiError("Bot API is not configured");
   }
   const response = await fetchBotData("commands");
-  return unwrapData(response).commands ?? [];
+  return unwrapData(response) as BotCommand[];
 }
 
 export async function getGroups(): Promise<BotGroup[]> {
@@ -177,7 +182,7 @@ export async function getGroups(): Promise<BotGroup[]> {
     throw new BotApiError("Bot API is not configured");
   }
   const response = await fetchBotData("groups");
-  const groups = unwrapData(response).groups ?? [];
+  const groups = unwrapData(response) as BotGroup[];
   return groups.map(normalizeGroup);
 }
 
@@ -186,7 +191,7 @@ export async function getLogs(limit = 50): Promise<SystemLog[]> {
     throw new BotApiError("Bot API is not configured");
   }
   const response = await fetchBotData("logs", { limit: String(limit) });
-  return unwrapData(response).logs ?? [];
+  return unwrapData(response) as SystemLog[];
 }
 
 export async function toggleCommand(
