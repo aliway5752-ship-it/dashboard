@@ -17,20 +17,19 @@ export class BotApiError extends Error {
 
 export function isBotApiConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_BOT_API_URL || "http://85.208.9.224:9518";
-  const key = process.env.NEXT_PUBLIC_BOT_API_KEY || process.env.BOT_API_KEY;
+  const key = process.env.BOT_API_KEY;
   return Boolean(url && key);
 }
 
 export function getBotApiUrl(): string {
   const baseUrl = process.env.NEXT_PUBLIC_BOT_API_URL || "http://85.208.9.224:9518";
-  const sanitizedBase = baseUrl.replace(/\/$/, "");
-  return `https://corsproxy.io/?${sanitizedBase}`;
+  return baseUrl.replace(/\/$/, "");
 }
 
 function getBotApiKey(): string {
-  const key = process.env.NEXT_PUBLIC_BOT_API_KEY || process.env.BOT_API_KEY;
+  const key = process.env.BOT_API_KEY;
   if (!key) {
-    throw new BotApiError("NEXT_PUBLIC_BOT_API_KEY is not configured");
+    throw new BotApiError("BOT_API_KEY is not configured on the server");
   }
   return key;
 }
@@ -54,27 +53,32 @@ export async function botApiRequest<T>(
 ): Promise<T> {
   const url = `${getBotApiUrl()}${path}`;
 
-  const response = await fetch(url, {
-    ...options,
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": getBotApiKey(),
-      ...options.headers,
-    },
-  });
+  try {
+    const response = await fetch(url, {
+      ...options,
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": getBotApiKey(),
+        ...options.headers,
+      },
+    });
 
-  const body = await parseJson<T>(response);
+    const body = await parseJson<T>(response);
 
-  if (!response.ok) {
-    const errorBody = body as ApiResponse;
-    throw new BotApiError(
-      errorBody.error ?? `Bot API request failed (${response.status})`,
-      response.status
-    );
+    if (!response.ok) {
+      const errorBody = body as ApiResponse;
+      throw new BotApiError(
+        errorBody.error ?? `Bot API request failed (${response.status})`,
+        response.status
+      );
+    }
+
+    return body;
+  } catch (error: unknown) {
+    console.error(`[Server API Route Fetch Failure] Failed to request ${url}:`, error);
+    throw error;
   }
-
-  return body;
 }
 
 export async function fetchBotData(
@@ -95,3 +99,4 @@ export async function sendBotCommand<T = unknown>(
     body: JSON.stringify(payload),
   });
 }
+
