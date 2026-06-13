@@ -90,8 +90,24 @@ export interface ApiResponse<T = unknown> {
 
 export interface RemoteBotDataPayload {
   stats?: DashboardStats;
-  metrics?: { cpu: number; ram: number };
-  status?: ConnectionState;
+  metrics?: {
+    processHeapUsed?: number;
+    processHeapUsedMB?: number;
+    processRss?: number;
+    processRssMB?: number;
+    systemTotalMemory?: number;
+    systemFreeMemory?: number;
+    systemUsedMemory?: number;
+    systemTotalMemoryMB?: number;
+    systemFreeMemoryMB?: number;
+    systemUsedMemoryMB?: number;
+    cpu?: number;
+  };
+  status?: {
+    botNumber?: string;
+    connected?: boolean;
+    uptime?: number;
+  };
   messages?: BotMessage[];
   commands?: BotCommand[];
   groups?: BotGroup[];

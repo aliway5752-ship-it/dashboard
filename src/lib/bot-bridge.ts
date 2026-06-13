@@ -60,15 +60,29 @@ function normalizeGroup(
   };
 }
 
-function toSystemMetrics(cpu: number, ram: number): SystemMetrics {
+function toSystemMetrics(metrics: {
+  processRssMB?: number;
+  systemUsedMemoryMB?: number;
+  systemTotalMemoryMB?: number;
+  cpu?: number;
+}): SystemMetrics {
   const timestamp = Date.now();
+  // Calculate CPU and RAM from actual bot API response
+  // Bot returns: processRssMB, systemTotalMemoryMB, systemUsedMemoryMB
+  const ramUsed = metrics.systemUsedMemoryMB || metrics.processRssMB || 0;
+  const ramTotal = metrics.systemTotalMemoryMB || 1;
+  const ramPercent = (ramUsed / ramTotal) * 100;
+  
+  // CPU is not directly provided, estimate from process stats or use 0
+  const cpuPercent = metrics.cpu || 0;
+  
   return {
-    cpu,
-    ram,
+    cpu: cpuPercent,
+    ram: ramPercent,
     point: {
       time: new Date(timestamp).toLocaleTimeString("en-GB", { hour12: false }),
-      cpu,
-      ram,
+      cpu: cpuPercent,
+      ram: ramPercent,
       timestamp,
     },
   };
@@ -115,7 +129,7 @@ export async function getSystemMetrics(): Promise<SystemMetrics> {
   }
   const response = await fetchBotData("metrics");
   const metrics = unwrapData(response).metrics!;
-  return toSystemMetrics(metrics.cpu, metrics.ram);
+  return toSystemMetrics(metrics);
 }
 
 export async function getConnectionState(): Promise<ConnectionState> {
@@ -127,7 +141,15 @@ export async function getConnectionState(): Promise<ConnectionState> {
     if (!response.success || !response.data?.status) {
       return DISCONNECTED;
     }
-    return response.data.status;
+    // Map bot API response to ConnectionState
+    // Bot returns: { connected: boolean, uptime: number, botNumber: string }
+    // Frontend expects: { api: "connected" | "disconnected" | "connecting", gateway: "connected" | "disconnected" | "connecting" }
+    const botStatus = response.data.status as unknown as { connected: boolean };
+    const status = botStatus.connected ? "connected" : "disconnected";
+    return {
+      api: status,
+      gateway: status,
+    };
   } catch {
     return DISCONNECTED;
   }
