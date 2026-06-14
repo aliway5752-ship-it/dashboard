@@ -49,16 +49,6 @@ function normalizeMessage(raw: BotMessage): BotMessage {
   };
 }
 
-function normalizeGroup(
-  raw: BotGroup & { members?: number }
-): BotGroup {
-  return {
-    id: raw.id,
-    name: raw.name,
-    groupId: raw.groupId,
-    memberCount: raw.memberCount ?? raw.members ?? 0,
-  };
-}
 
 function toSystemMetrics(metrics: {
   processRssMB?: number;
@@ -120,7 +110,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     throw new BotApiError("Bot API is not configured");
   }
   const response = await fetchBotData("stats");
-  return unwrapData(response) as DashboardStats;
+  const data = unwrapData(response);
+  // Handle both direct object and nested data structure
+  const stats = typeof data === 'object' && data !== null && !Array.isArray(data) ? data : {};
+  return stats as DashboardStats;
 }
 
 export async function getSystemMetrics(): Promise<SystemMetrics> {
@@ -183,9 +176,15 @@ export async function getGroups(): Promise<BotGroup[]> {
   }
   const response = await fetchBotData("groups");
   const data = unwrapData(response);
-  // Handle both direct array and nested data structure
-  const groups = Array.isArray(data) ? data : (data as { data?: BotGroup[] }).data || [];
-  return groups.map(normalizeGroup);
+  // The array is directly at jsonResponse.data
+  const groupsArray = Array.isArray(data) ? data : [];
+  // Map to BotGroup type
+  return groupsArray.map((g: { groupName: string; groupId: string; membersCount: number }) => ({
+    id: g.groupId,
+    groupId: g.groupId,
+    name: g.groupName,
+    memberCount: g.membersCount || 0,
+  }));
 }
 
 export async function getLogs(limit = 50): Promise<SystemLog[]> {
