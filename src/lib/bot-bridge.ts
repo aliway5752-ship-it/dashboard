@@ -78,11 +78,14 @@ function toSystemMetrics(metrics: {
   };
 }
 
-function unwrapData<T>(response: ApiResponse<T>): T {
-  if (!response.success || response.data === undefined) {
-    throw new BotApiError(response.error ?? "Remote bot returned no data");
+function unwrapData<T>(response: any): T {
+  if (!response || !response.success) {
+    throw new BotApiError(response?.error ?? "Remote bot returned success: false");
   }
-  return response.data;
+  if (response.data !== undefined) return response.data;
+  if (response.status !== undefined) return response.status;
+  if (response.metrics !== undefined) return response.metrics;
+  return response as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -131,23 +134,13 @@ export async function getSystemMetrics(): Promise<SystemMetrics> {
 }
 
 export async function getConnectionState(): Promise<ConnectionState> {
-  if (!isBotApiConfigured()) {
-    return DISCONNECTED;
-  }
+  if (!isBotApiConfigured()) return DISCONNECTED;
   try {
     const response = await fetchBotData("status");
-    if (!response.success || !response.data) {
-      return DISCONNECTED;
-    }
-    // Map bot API response to ConnectionState
-    // Bot returns: { connected: boolean, uptime: number, botNumber: string }
-    // Frontend expects: { api: "connected" | "disconnected" | "connecting", gateway: "connected" | "disconnected" | "connecting" }
-    const botStatus = response.data as unknown as { connected: boolean };
+    if (!response || !response.success) return DISCONNECTED;
+    const botStatus = unwrapData(response) as { connected: boolean };
     const status = botStatus.connected ? "connected" : "disconnected";
-    return {
-      api: status,
-      gateway: status,
-    };
+    return { api: status, gateway: status };
   } catch {
     return DISCONNECTED;
   }
@@ -171,15 +164,11 @@ export async function getCommands(): Promise<BotCommand[]> {
 }
 
 export async function getGroups(): Promise<BotGroup[]> {
-  if (!isBotApiConfigured()) {
-    throw new BotApiError("Bot API is not configured");
-  }
+  if (!isBotApiConfigured()) throw new BotApiError("Bot API is not configured");
   const response = await fetchBotData("groups");
   const data = unwrapData(response);
-  // The array is directly at jsonResponse.data
   const groupsArray = Array.isArray(data) ? data : [];
-  // Map to BotGroup type
-  return groupsArray.map((g: { groupName: string; groupId: string; membersCount: number }) => ({
+  return groupsArray.map((g: any) => ({
     id: g.groupId,
     groupId: g.groupId,
     name: g.groupName,
