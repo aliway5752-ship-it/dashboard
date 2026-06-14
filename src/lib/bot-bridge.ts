@@ -182,7 +182,9 @@ export async function getGroups(): Promise<BotGroup[]> {
     throw new BotApiError("Bot API is not configured");
   }
   const response = await fetchBotData("groups");
-  const groups = unwrapData(response) as BotGroup[];
+  const data = unwrapData(response);
+  // Handle both direct array and nested data structure
+  const groups = Array.isArray(data) ? data : (data as { data?: BotGroup[] }).data || [];
   return groups.map(normalizeGroup);
 }
 
