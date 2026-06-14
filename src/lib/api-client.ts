@@ -7,6 +7,7 @@ export async function apiFetch<T>(
   try {
     const response = await fetch(path, {
       ...options,
+      cache: "no-store",
       headers: {
         "Content-Type": "application/json",
         ...options?.headers,
