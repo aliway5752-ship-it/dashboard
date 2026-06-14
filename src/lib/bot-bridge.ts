@@ -78,6 +78,7 @@ function toSystemMetrics(metrics: {
   };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function unwrapData<T>(response: any): T {
   if (!response || !response.success) {
     throw new BotApiError(response?.error ?? "Remote bot returned success: false");
@@ -168,6 +169,7 @@ export async function getGroups(): Promise<BotGroup[]> {
   const response = await fetchBotData("groups");
   const data = unwrapData(response);
   const groupsArray = Array.isArray(data) ? data : [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return groupsArray.map((g: any) => ({
     id: g.groupId,
     groupId: g.groupId,
