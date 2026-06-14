@@ -89,8 +89,17 @@ export async function GET(
     }
 
     if (fullPath === "groups") {
-      const data = await botBridge.getGroups();
-      return NextResponse.json({ success: true, data });
+      try {
+        const data = await botBridge.getGroups();
+        return NextResponse.json({ success: true, data });
+      } catch (error: unknown) {
+        console.error("[Groups API Error] Failed to fetch groups:", error);
+        const message = error instanceof Error ? error.message : "Failed to fetch groups";
+        return NextResponse.json(
+          { success: false, error: message, data: [] },
+          { status: 500 }
+        );
+      }
     }
 
     if (fullPath === "logs") {
