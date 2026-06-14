@@ -171,10 +171,10 @@ export async function getGroups(): Promise<BotGroup[]> {
   const groupsArray = Array.isArray(data) ? data : [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return groupsArray.map((g: any) => ({
-    id: g.groupId,
-    groupId: g.groupId,
-    name: g.groupName,
-    memberCount: g.membersCount || 0,
+    id: g.id,
+    groupId: g.id,
+    name: g.name,
+    memberCount: g.members || 0,
   }));
 }
 

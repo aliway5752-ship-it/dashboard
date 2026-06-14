@@ -38,14 +38,14 @@ export default function GroupsPage() {
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const fetchGroups = async () => {
-    const res = await apiFetch<{ groupName: string; groupId: string; membersCount: number }[]>("/api/groups");
+    const res = await apiFetch<{ id: string; name: string; members: number }[]>("/api/groups");
     if (res.success && res.data) {
       // Map API response to BotGroup type
       const mappedGroups: BotGroup[] = res.data.map((group) => ({
-        id: group.groupId,
-        name: group.groupName,
-        groupId: group.groupId,
-        memberCount: group.membersCount,
+        id: group.id,
+        name: group.name,
+        groupId: group.id,
+        memberCount: group.members,
       }));
       setGroups(mappedGroups);
     }
